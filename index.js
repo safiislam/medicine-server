@@ -31,6 +31,7 @@ async function run() {
     const userCollection = client.db("mediShop").collection("users");
     const categoryCollection = client.db("mediShop").collection("categories");
     const queriesCollection = client.db("mediShop").collection("queries");
+    const askForAddCollection = client.db("mediShop").collection("askForAdd");
     const paymentCollection = client
       .db("mediShop")
       .collection("paymentHistory");
@@ -60,6 +61,50 @@ async function run() {
       }
       next();
     };
+    // Ad Apis
+    app.post("/AddAD", async (req, res) => {
+      const data = req.body;
+      const result = await askForAddCollection.insertOne(data);
+      res.send(result);
+    });
+    app.get("/getAd", async (req, res) => {
+      const { email } = req.query;
+      const result = await askForAddCollection
+        .find({ SellerEmail: email })
+        .toArray();
+      res.send(result);
+    });
+    app.patch("/updateAd/:id", async (req, res) => {
+      const { id } = req.params;
+      const isAdExist = await askForAddCollection.findOne({
+        _id: new ObjectId(id),
+      });
+
+      let data;
+      if (isAdExist.status === "pending") {
+        data = { status: "approved" };
+      }
+      if (isAdExist.status === "approved") {
+        data = { status: "pending" };
+      }
+      const result = await askForAddCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: { ...data },
+        }
+      );
+      res.send(result);
+    });
+    app.get("/adSetBanner", async (req, res) => {
+      const result = await askForAddCollection
+        .find({ status: "approved" })
+        .toArray();
+      res.send(result);
+    });
+    app.get("/getAllAd", async (req, res) => {
+      const result = await askForAddCollection.find().toArray();
+      res.send(result);
+    });
 
     //user related API
     app.get("/users", verifyJWT, verifyAdmin, async (req, res) => {
@@ -78,13 +123,23 @@ async function run() {
     });
     app.get("/me", verifyJWT, async (req, res) => {
       const { email } = req.query;
-      const result = await userCollection.findOne(
-        { email: email },
-        { projection: { name: 0, photo: 0 } }
+      const result = await userCollection.findOne({ email: email });
+      res.send(result);
+    });
+    app.patch("/updateMe/:id", verifyJWT, async (req, res) => {
+      const { id } = req.params;
+      const data = req.body;
+      const result = await userCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: { ...data },
+        },
+        {
+          upsert: true,
+        }
       );
       res.send(result);
     });
-
     app.post("/users", async (req, res) => {
       const user = req.body;
       const isUserExist = await userCollection.findOne({ email: user.email });
@@ -423,7 +478,7 @@ async function run() {
       }
     });
     //  new
-    app.get("/allpayment", verifyJWT, verifyAdmin, async (req, res) => {
+    app.get("/allpayment", async (req, res) => {
       const result = await paymentCollection
         .find({}, { sort: { data: -1 } })
         .toArray();
@@ -646,60 +701,120 @@ async function run() {
       const result = await cursor.toArray();
       res.send(result);
     });
+    // app.get("/sellerPaymentHistory", async (req, res) => {
+    //   try {
+    //     const { email } = req.query;
+    //     const user = await userCollection.findOne({ email });
+    //     if (!user) {
+    //       return res.status(404).send({ error: "User not found" });
+    //     }
+    //     const userId = user._id;
+
+    //     const result = await categoryCollection
+    //       .aggregate([
+    //         {
+    //           $match: { sellerId: userId.toString() },
+    //         },
+    //         {
+    //           $lookup: {
+    //             from: "paymentHistory",
+    //             pipeline: [
+    //               {
+    //                 $unwind: "$medicines",
+    //               },
+    //               {
+    //                 $addFields: {
+    //                   medicineId: {
+    //                     $arrayElemAt: [{ $objectToArray: "$medicines" }, 0],
+    //                   },
+    //                 },
+    //               },
+    //               {
+    //                 $lookup: {
+    //                   from: "categories",
+    //                   localField: "medicineId.k",
+    //                   foreignField: "_id",
+    //                   as: "medicineDetails",
+    //                 },
+    //               },
+    //               {
+    //                 $unwind: "$medicineDetails",
+    //               },
+    //               {
+    //                 $match: {
+    //                   "medicineDetails.sellerId": userId.toString(),
+    //                 },
+    //               },
+    //               {
+    //                 $group: {
+    //                   _id: "$_id",
+    //                   email: { $first: "$email" },
+    //                   totalPrice: { $first: "$totalPrice" },
+    //                   date: { $first: "$date" },
+    //                   transectionId: { $first: "$transectionId" },
+    //                   paymentStatus: { $first: "$paymentStatus" },
+    //                   medicines: {
+    //                     $push: "$medicines",
+    //                   },
+    //                 },
+    //               },
+    //             ],
+    //             as: "paymentData",
+    //           },
+    //         },
+    //       ])
+    //       .toArray();
+
+    //     res.send(result);
+    //   } catch (error) {
+    //     console.error("Error retrieving seller payment history", error);
+    //     res
+    //       .status(500)
+    //       .send({ error: "Failed to retrieve seller payment history" });
+    //   }
+    // });
     app.get("/sellerPaymentHistory", async (req, res) => {
       try {
         const { email } = req.query;
+        if (!email) {
+          return res.status(400).send({ error: "Email is required" });
+        }
+
         const user = await userCollection.findOne({ email });
         if (!user) {
           return res.status(404).send({ error: "User not found" });
         }
-        const userId = user._id;
+
+        const userId = user._id.toString();
 
         const result = await categoryCollection
           .aggregate([
             {
-              $match: { sellerId: userId.toString() },
+              $match: { sellerId: userId },
             },
             {
               $lookup: {
                 from: "paymentHistory",
+                let: { categoryId: "$_id" },
                 pipeline: [
-                  {
-                    $unwind: "$medicines",
-                  },
-                  {
-                    $addFields: {
-                      medicineId: {
-                        $arrayElemAt: [{ $objectToArray: "$medicines" }, 0],
-                      },
-                    },
-                  },
-                  {
-                    $lookup: {
-                      from: "categories",
-                      localField: "medicineId.k",
-                      foreignField: "_id",
-                      as: "medicineDetails",
-                    },
-                  },
-                  {
-                    $unwind: "$medicineDetails",
-                  },
+                  { $unwind: "$medicines" },
                   {
                     $match: {
-                      "medicineDetails.sellerId": userId.toString(),
-                    },
-                  },
-                  {
-                    $group: {
-                      _id: "$_id",
-                      email: { $first: "$email" },
-                      totalPrice: { $first: "$totalPrice" },
-                      date: { $first: "$date" },
-                      transectionId: { $first: "$transectionId" },
-                      paymentStatus: { $first: "$paymentStatus" },
-                      medicines: {
-                        $push: "$medicines",
+                      $expr: {
+                        $eq: [
+                          "$$categoryId",
+                          {
+                            $toObjectId: {
+                              $first: {
+                                $map: {
+                                  input: { $objectToArray: "$medicines" },
+                                  as: "med",
+                                  in: "$$med.k",
+                                },
+                              },
+                            },
+                          },
+                        ],
                       },
                     },
                   },
@@ -707,15 +822,27 @@ async function run() {
                 as: "paymentData",
               },
             },
+            {
+              $project: {
+                _id: 1,
+                medicine_name: 1,
+                category: 1,
+                company_name: 1,
+                price_per_unit: 1,
+                description: 1,
+                discount: 1,
+                paymentData: 1,
+              },
+            },
           ])
           .toArray();
 
         res.send(result);
       } catch (error) {
-        console.error("Error retrieving seller payment history", error);
-        res
-          .status(500)
-          .send({ error: "Failed to retrieve seller payment history" });
+        console.error("Error fetching seller payment history:", error);
+        res.status(500).send({
+          error: "An error occurred while fetching the seller payment history",
+        });
       }
     });
 
