@@ -158,14 +158,44 @@ async function run() {
 
     //categories related API
     app.get("/categories", async (req, res) => {
-      const result = await categoryCollection
-        .find()
-        // .find({}
-        //   // { projection: { sellerId: 0 }
-        // })
-        .toArray();
-      res.send(result);
+      const { page = 1, limit = 10, sort = "asc", search = "" } = req.query;
+      const searchQuery = search
+        ? {
+            $or: [
+              { medicine_name: { $regex: search, $options: "i" } },
+              { genericName: { $regex: search, $options: "i" } },
+              { company_name: { $regex: search, $options: "i" } },
+            ],
+          }
+        : {};
+
+      const sortOrder = sort === "asc" ? 1 : -1;
+
+      try {
+        const categories = await categoryCollection
+          .find(searchQuery)
+          .sort({ price_per_unit: sortOrder })
+          .skip((page - 1) * limit)
+          .limit(parseInt(limit))
+          .toArray();
+
+        const total = await categoryCollection.countDocuments(searchQuery);
+        const totalPages = Math.ceil(total / limit);
+
+        res.send({
+          total,
+          totalPages,
+          currentPage: page,
+          categories,
+        });
+      } catch (error) {
+        console.error(error);
+        res
+          .status(500)
+          .send({ error: "An error occurred while fetching categories" });
+      }
     });
+
     app.post("/category", async (req, res) => {
       const data = req.body;
       try {
