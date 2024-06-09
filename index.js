@@ -67,14 +67,14 @@ async function run() {
       const result = await askForAddCollection.insertOne(data);
       res.send(result);
     });
-    app.get("/getAd", async (req, res) => {
+    app.get("/getAd", verifyJWT, async (req, res) => {
       const { email } = req.query;
       const result = await askForAddCollection
         .find({ SellerEmail: email })
         .toArray();
       res.send(result);
     });
-    app.patch("/updateAd/:id", async (req, res) => {
+    app.patch("/updateAd/:id", verifyJWT, verifyAdmin, async (req, res) => {
       const { id } = req.params;
       const isAdExist = await askForAddCollection.findOne({
         _id: new ObjectId(id),
